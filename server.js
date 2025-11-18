@@ -100,6 +100,21 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     });
     await randomDelay(500, 1000);
     
+    // Wait for video element to appear
+    console.log('Waiting for video element to appear...');
+    try {
+      await page.waitForSelector('video', { 
+        timeout: 30000, // Wait up to 30 seconds for video element
+        state: 'attached' // Element exists in DOM (doesn't need to be visible)
+      });
+      console.log('Video element found');
+    } catch (error) {
+      throw new Error('Video element not found within timeout period');
+    }
+    
+    // Wait a bit more for video to be ready
+    await randomDelay(1000, 2000);
+    
     // Click video element programmatically using browser script
     console.log('Clicking video element programmatically...');
     const videoClicked = await page.evaluate(() => {
@@ -112,16 +127,16 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     });
     
     if (!videoClicked) {
-      throw new Error('Video element not found');
+      throw new Error('Video element not found after waiting');
     }
     
     // Wait a bit after clicking (simulates human reaction time)
-    await randomDelay(500, 1000);
+    await randomDelay(1000, 2000);
 
     // Wait for the API request to complete
     console.log('Waiting for API response...');
     let waitTime = 0;
-    const maxWaitTime = 15000; // 15 seconds timeout
+    const maxWaitTime = 30000; // 30 seconds timeout (increased from 15)
     
     while (!apiResponse && waitTime < maxWaitTime) {
       await page.waitForTimeout(500);
