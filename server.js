@@ -200,8 +200,10 @@ app.get('/', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log(`Example: http://localhost:${PORT}/api/items-count/176778196`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on http://0.0.0.0:${PORT}`);
+  console.log(`Server is accessible from: http://YOUR_IP:${PORT}`);
+  console.log(`Example: http://YOUR_IP:${PORT}/api/items-count/176778196`);
+  console.log(`\nMake sure to open port ${PORT} in Windows Firewall!`);
 });
 

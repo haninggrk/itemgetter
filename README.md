@@ -151,6 +151,57 @@ Returns API information and usage instructions.
 - `PORT`: Server port (default: 3000)
 - `CDP_ENDPOINT`: CDP endpoint URL (default: `http://localhost:9222`)
 
+## Opening Port in Windows Firewall
+
+Since the server listens on `0.0.0.0` to accept connections from outside, you need to open the port in Windows Firewall.
+
+### Method 1: Using PowerShell (Recommended - Run as Administrator)
+
+```powershell
+# Open port 3000 (or your custom PORT)
+New-NetFirewallRule -DisplayName "ItemGetter API Server" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+```
+
+### Method 2: Using Command Prompt (Run as Administrator)
+
+```cmd
+netsh advfirewall firewall add rule name="ItemGetter API Server" dir=in action=allow protocol=TCP localport=3000
+```
+
+### Method 3: Using Windows Firewall GUI
+
+1. Open **Windows Defender Firewall** (search in Start menu)
+2. Click **Advanced settings** on the left
+3. Click **Inbound Rules** → **New Rule...**
+4. Select **Port** → Click **Next**
+5. Select **TCP** and enter your port number (default: **3000**) → Click **Next**
+6. Select **Allow the connection** → Click **Next**
+7. Check all profiles (Domain, Private, Public) → Click **Next**
+8. Name it "ItemGetter API Server" → Click **Finish**
+
+### Verify Port is Open
+
+After opening the port, verify it's accessible:
+
+```powershell
+# Check if port is listening
+netstat -an | findstr :3000
+```
+
+### Finding Your Server IP Address
+
+To access the server from outside, you need your RDP server's IP address:
+
+```cmd
+# Get your local IP address
+ipconfig
+```
+
+Look for **IPv4 Address** under your network adapter. Use this IP to access your API:
+- `http://YOUR_IP:3000/api/items-count/176778196`
+
+**Note:** If your RDP server is behind a router, you may also need to configure port forwarding on your router.
+
 ## Notes
 
 - **Uses real browser via CDP** - This is the best anti-detection method as it uses your actual installed browser (Chrome/Edge) without automation flags
