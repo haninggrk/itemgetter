@@ -221,6 +221,30 @@ app.get('/api/products/:sessionId', async (req, res) => {
     page = await context.newPage();
     console.log('Created new page for request');
 
+    // Helper function to remove Shopee dialog popup by deleting the node
+    const closeShopeeDialog = async () => {
+      try {
+        const dialogRemoved = await page.evaluate(() => {
+          const dialog = document.querySelector('.Dialog__Container-sc-1l9g2uc-0.iOfyCd') ||
+                        document.querySelector('[class*="Dialog__Container"]');
+          if (dialog && dialog.parentNode) {
+            dialog.parentNode.removeChild(dialog);
+            return true;
+          }
+          return false;
+        });
+        
+        if (dialogRemoved) {
+          console.log('Removed Shopee dialog popup');
+          await page.waitForTimeout(100);
+          return true;
+        }
+      } catch (e) {
+        // Dialog not found or error, continue
+      }
+      return false;
+    };
+
     // Set up response interceptors
     let joinv2Response = null;
     const joinv2Pattern = new RegExp(`/api/v1/session/${sessionId}/joinv2`);
@@ -282,6 +306,9 @@ app.get('/api/products/:sessionId', async (req, res) => {
       });
     }
     
+    // Close any popup before waiting for video
+    await closeShopeeDialog();
+    
     // Wait for video element and click it
     console.log('Waiting for video element to appear...');
     try {
@@ -294,6 +321,9 @@ app.get('/api/products/:sessionId', async (req, res) => {
       await page.close();
       throw new Error('Video element not found within timeout period');
     }
+    
+    // Close popup again before clicking video
+    await closeShopeeDialog();
     
     console.log('Clicking video element...');
     const videoClicked = await page.evaluate(() => {
@@ -334,40 +364,67 @@ app.get('/api/products/:sessionId', async (req, res) => {
 
     console.log(`Expected items count: ${itemsCount}`);
     
-    // Click the OpenProductButton to open product list
-    console.log('Clicking OpenProductButton to open product list...');
-    try {
-      await page.waitForSelector('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA', { 
-        timeout: 10000 
-      });
-      await page.click('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA');
-      console.log('Product button clicked');
-    } catch (error) {
-      console.log('OpenProductButton not found, trying alternative selector...');
+    // Close any existing popup before clicking product button
+    await closeShopeeDialog();
+    
+    // Click the OpenProductButton to open product list (with retry logic)
+    let containerFound = false;
+    let retryCount = 0;
+    const maxRetries = 5;
+    
+    while (!containerFound && retryCount < maxRetries) {
+      // Close any popup before each attempt
+      await closeShopeeDialog();
+      await page.waitForTimeout(500);
+      
+      console.log(`Attempting to click OpenProductButton (attempt ${retryCount + 1}/${maxRetries})...`);
+      
       try {
-        await page.waitForSelector('[class*="OpenProductButton"]', { timeout: 5000 });
-        await page.click('[class*="OpenProductButton"]');
-        console.log('Product button clicked (alternative selector)');
-      } catch (altError) {
-        console.log('Could not find OpenProductButton, continuing...');
+        // Try to find and click the button
+        const buttonFound = await page.evaluate(() => {
+          const button = document.querySelector('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA') ||
+                        document.querySelector('[class*="OpenProductButton"]');
+          if (button) {
+            button.click();
+            return true;
+          }
+          return false;
+        });
+        
+        if (buttonFound) {
+          console.log('Product button clicked');
+          await page.waitForTimeout(1000);
+          
+          // Check if container appeared
+          containerFound = await page.evaluate(() => {
+            return !!(
+              document.querySelector('.ProductList__StyledList-zzolnk-4.eUSJvS') ||
+              document.querySelector('[class*="ProductList"]')
+            );
+          });
+          
+          if (containerFound) {
+            console.log('Product list container found!');
+            break;
+          } else {
+            console.log('Container not found after click, retrying...');
+            retryCount++;
+            await page.waitForTimeout(1000);
+          }
+        } else {
+          console.log('OpenProductButton not found, waiting and retrying...');
+          retryCount++;
+          await page.waitForTimeout(1000);
+        }
+      } catch (error) {
+        console.log(`Error clicking button: ${error.message}, retrying...`);
+        retryCount++;
+        await page.waitForTimeout(1000);
       }
     }
-
-    // Wait for product list container
-    console.log('Waiting for product list container...');
-    try {
-      await page.waitForSelector('.ProductList__StyledList-zzolnk-4.eUSJvS', { 
-        timeout: 10000 
-      });
-      console.log('Product list container found');
-    } catch (error) {
-      console.log('ProductList container not found, trying alternative selector...');
-      try {
-        await page.waitForSelector('[class*="ProductList"]', { timeout: 5000 });
-        console.log('Product list container found (alternative selector)');
-      } catch (altError) {
-        console.log('Product list container not found, but continuing...');
-      }
+    
+    if (!containerFound) {
+      console.log('Could not open product container after multiple attempts, but continuing...');
     }
 
     // Scroll and collect items until we have all items
@@ -386,37 +443,8 @@ app.get('/api/products/:sessionId', async (req, res) => {
         break;
       }
       
-      // Close any popups that might appear (programmatically)
-      try {
-        const popupClosed = await page.evaluate(() => {
-          // Try to find and close common popup elements
-          const closeSelectors = [
-            '[class*="close"]',
-            '[class*="Close"]',
-            '[aria-label*="close" i]',
-            '[aria-label*="Close"]',
-            'button[class*="dismiss"]',
-            '[class*="modal"] [class*="close"]',
-            '[class*="popup"] [class*="close"]'
-          ];
-          
-          for (const selector of closeSelectors) {
-            const element = document.querySelector(selector);
-            if (element && element.offsetParent !== null) { // Element is visible
-              element.click();
-              return true;
-            }
-          }
-          return false;
-        });
-        
-        if (popupClosed) {
-          console.log('Closed popup programmatically');
-          await page.waitForTimeout(200);
-        }
-      } catch (e) {
-        // No popup or error closing, continue
-      }
+      // Close Shopee dialog popup if it appears
+      await closeShopeeDialog();
       
       // Scroll down in the container programmatically
       await page.evaluate((selector) => {
