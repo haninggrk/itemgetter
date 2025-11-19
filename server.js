@@ -72,12 +72,6 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
       }
     });
 
-    // Helper function for random delay (simulates human behavior)
-    const randomDelay = (min, max) => {
-      const delay = Math.floor(Math.random() * (max - min + 1)) + min;
-      return page.waitForTimeout(delay);
-    };
-
     // Navigate to the Shopee live URL
     const liveUrl = `https://live.shopee.co.id/share?from=live&session=${sessionId}`;
     console.log(`Navigating to: ${liveUrl}`);
@@ -86,37 +80,33 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
       waitUntil: 'domcontentloaded',
       timeout: 30000
     });
-
-    // Wait for page to fully load with random delay
-    await randomDelay(2000, 3500);
     
-    // Simulate human-like mouse movement
-    await page.mouse.move(Math.floor(Math.random() * 500) + 100, Math.floor(Math.random() * 500) + 100);
-    await randomDelay(300, 800);
-    
-    // Scroll a bit to simulate reading
-    await page.evaluate(() => {
-      window.scrollBy(0, Math.floor(Math.random() * 200) + 50);
-    });
-    await randomDelay(500, 1000);
+    // Check if live streaming has ended
+    console.log('Checking if live streaming has ended...');
+    const pageContent = await page.content();
+    if (pageContent.includes('Live Streaming Berakhir')) {
+      await page.close();
+      return res.status(400).json({
+        error: 'Live streaming has ended',
+        success: false
+      });
+    }
     
     // Wait for video element to appear
     console.log('Waiting for video element to appear...');
     try {
       await page.waitForSelector('video', { 
-        timeout: 30000, // Wait up to 30 seconds for video element
-        state: 'attached' // Element exists in DOM (doesn't need to be visible)
+        timeout: 30000,
+        state: 'attached'
       });
       console.log('Video element found');
     } catch (error) {
+      await page.close();
       throw new Error('Video element not found within timeout period');
     }
     
-    // Wait a bit more for video to be ready
-    await randomDelay(1000, 2000);
-    
-    // Click video element programmatically using browser script
-    console.log('Clicking video element programmatically...');
+    // Click video element programmatically
+    console.log('Clicking video element...');
     const videoClicked = await page.evaluate(() => {
       const video = document.querySelector('video');
       if (video) {
@@ -127,20 +117,18 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     });
     
     if (!videoClicked) {
+      await page.close();
       throw new Error('Video element not found after waiting');
     }
-    
-    // Wait a bit after clicking (simulates human reaction time)
-    await randomDelay(1000, 2000);
 
     // Wait for the API request to complete
     console.log('Waiting for API response...');
     let waitTime = 0;
-    const maxWaitTime = 30000; // 30 seconds timeout (increased from 15)
+    const maxWaitTime = 30000;
     
     while (!apiResponse && waitTime < maxWaitTime) {
-      await page.waitForTimeout(500);
-      waitTime += 500;
+      await page.waitForTimeout(100);
+      waitTime += 100;
     }
 
     if (!apiResponse) {
@@ -175,6 +163,322 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
         console.log('Closed page after error');
       } catch (closeError) {
         // Page might already be closed, ignore the error
+        console.log('Page already closed or error closing:', closeError.message);
+      }
+    }
+
+    res.status(500).json({
+      error: error.message,
+      success: false
+    });
+  }
+});
+
+// API endpoint to get product data
+app.get('/api/products/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  
+  if (!sessionId) {
+    return res.status(400).json({ error: 'Session ID is required' });
+  }
+
+  let browser = null;
+  let page = null;
+  
+  try {
+    // Connect to existing browser via CDP
+    console.log(`Connecting to browser via CDP: ${CDP_ENDPOINT}`);
+    try {
+      browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+    } catch (error) {
+      throw new Error(`Failed to connect to browser via CDP at ${CDP_ENDPOINT}. Make sure your browser is launched with --remote-debugging-port=9222. Error: ${error.message}`);
+    }
+    
+    // Get or create context
+    const contexts = browser.contexts();
+    let context;
+    
+    if (contexts.length > 0) {
+      context = contexts[0];
+      console.log('Using existing browser context');
+    } else {
+      context = await browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        locale: 'id-ID',
+        timezoneId: 'Asia/Jakarta',
+        extraHTTPHeaders: {
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1'
+        }
+      });
+      console.log('Created new browser context');
+    }
+
+    // Create a new page for this request
+    page = await context.newPage();
+    console.log('Created new page for request');
+
+    // Set up response interceptors
+    let joinv2Response = null;
+    const joinv2Pattern = new RegExp(`/api/v1/session/${sessionId}/joinv2`);
+    
+    // Store all items from more_items API calls
+    const allItems = new Map(); // Use Map to deduplicate by item_id
+    const moreItemsPattern = new RegExp(`/api/v1/session/${sessionId}/more_items`);
+
+    page.on('response', async (response) => {
+      const url = response.url();
+      
+      if (joinv2Pattern.test(url)) {
+        try {
+          joinv2Response = await response.json();
+        } catch (error) {
+          console.error('Error parsing joinv2 response:', error);
+        }
+      }
+      
+      if (moreItemsPattern.test(url)) {
+        try {
+          const data = await response.json();
+          if (data && data.data && data.data.items) {
+            // Add items to map, deduplicating by item_id
+            data.data.items.forEach(item => {
+              if (item.item_id) {
+                if (!allItems.has(item.item_id)) {
+                  allItems.set(item.item_id, item);
+                }
+              } else {
+                console.warn('Item missing item_id:', item);
+              }
+            });
+            console.log(`Received ${data.data.items.length} items, total unique: ${allItems.size}`);
+          }
+        } catch (error) {
+          console.error('Error parsing more_items response:', error);
+        }
+      }
+    });
+
+    // Navigate to the Shopee live URL
+    const liveUrl = `https://live.shopee.co.id/share?from=live&session=${sessionId}`;
+    console.log(`Navigating to: ${liveUrl}`);
+    
+    await page.goto(liveUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
+    
+    // Check if live streaming has ended
+    console.log('Checking if live streaming has ended...');
+    const pageContent = await page.content();
+    if (pageContent.includes('Live Streaming Berakhir')) {
+      await page.close();
+      return res.status(400).json({
+        error: 'Live streaming has ended',
+        success: false
+      });
+    }
+    
+    // Wait for video element and click it
+    console.log('Waiting for video element to appear...');
+    try {
+      await page.waitForSelector('video', { 
+        timeout: 30000,
+        state: 'attached'
+      });
+      console.log('Video element found');
+    } catch (error) {
+      await page.close();
+      throw new Error('Video element not found within timeout period');
+    }
+    
+    console.log('Clicking video element...');
+    const videoClicked = await page.evaluate(() => {
+      const video = document.querySelector('video');
+      if (video) {
+        video.click();
+        return true;
+      }
+      return false;
+    });
+    
+    if (!videoClicked) {
+      await page.close();
+      throw new Error('Video element not found after waiting');
+    }
+
+    // Wait for joinv2 response to get items_cnt
+    console.log('Waiting for joinv2 response to get items count...');
+    let waitTime = 0;
+    const maxWaitTime = 30000;
+    
+    while (!joinv2Response && waitTime < maxWaitTime) {
+      await page.waitForTimeout(500);
+      waitTime += 500;
+    }
+
+    if (!joinv2Response) {
+      await page.close();
+      throw new Error('joinv2 API response not received within timeout period');
+    }
+
+    const itemsCount = joinv2Response?.data?.session?.items_cnt;
+    
+    if (itemsCount === undefined) {
+      await page.close();
+      throw new Error('items_cnt not found in API response');
+    }
+
+    console.log(`Expected items count: ${itemsCount}`);
+    
+    // Click the OpenProductButton to open product list
+    console.log('Clicking OpenProductButton to open product list...');
+    try {
+      await page.waitForSelector('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA', { 
+        timeout: 10000 
+      });
+      await page.click('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA');
+      console.log('Product button clicked');
+    } catch (error) {
+      console.log('OpenProductButton not found, trying alternative selector...');
+      try {
+        await page.waitForSelector('[class*="OpenProductButton"]', { timeout: 5000 });
+        await page.click('[class*="OpenProductButton"]');
+        console.log('Product button clicked (alternative selector)');
+      } catch (altError) {
+        console.log('Could not find OpenProductButton, continuing...');
+      }
+    }
+
+    // Wait for product list container
+    console.log('Waiting for product list container...');
+    try {
+      await page.waitForSelector('.ProductList__StyledList-zzolnk-4.eUSJvS', { 
+        timeout: 10000 
+      });
+      console.log('Product list container found');
+    } catch (error) {
+      console.log('ProductList container not found, trying alternative selector...');
+      try {
+        await page.waitForSelector('[class*="ProductList"]', { timeout: 5000 });
+        console.log('Product list container found (alternative selector)');
+      } catch (altError) {
+        console.log('Product list container not found, but continuing...');
+      }
+    }
+
+    // Scroll and collect items until we have all items
+    console.log('Scrolling to collect all items...');
+    const scrollContainer = '.ProductList__StyledList-zzolnk-4.eUSJvS';
+    let previousItemCount = 0;
+    let noNewItemsCount = 0;
+    const maxNoNewItems = 3; // Stop if no new items after 3 scrolls
+    
+    while (allItems.size < itemsCount) {
+      // Scroll down in the container
+      await page.evaluate((selector) => {
+        const container = document.querySelector(selector) || 
+                         document.querySelector('[class*="ProductList"]');
+        if (container) {
+          container.scrollTop += 500;
+        } else {
+          // Fallback: scroll the page
+          window.scrollBy(0, 500);
+        }
+      }, scrollContainer);
+      
+      await page.waitForTimeout(500);
+      
+      // Check if we got new items
+      if (allItems.size === previousItemCount) {
+        noNewItemsCount++;
+        if (noNewItemsCount >= maxNoNewItems) {
+          console.log('No new items after scrolling, stopping...');
+          break;
+        }
+      } else {
+        noNewItemsCount = 0;
+      }
+      
+      previousItemCount = allItems.size;
+      console.log(`Collected ${allItems.size} / ${itemsCount} items`);
+      
+      // Safety timeout - don't scroll forever
+      if (allItems.size >= itemsCount) {
+        console.log('All items collected!');
+        break;
+      }
+      
+      // Additional safety: if we've been scrolling for too long
+      if (allItems.size > 0 && allItems.size < itemsCount) {
+        // Check if we're at the bottom
+        const isAtBottom = await page.evaluate((selector) => {
+          const container = document.querySelector(selector) || 
+                           document.querySelector('[class*="ProductList"]');
+          if (container) {
+            return container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
+          }
+          return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
+        }, scrollContainer);
+        
+        if (isAtBottom && noNewItemsCount >= 2) {
+          console.log('Reached bottom and no new items, stopping...');
+          break;
+        }
+      }
+    }
+
+    // Convert Map to Array and extract only item_id and shop_id
+    const allProducts = Array.from(allItems.values());
+    const products = allProducts.map(item => ({
+      item_id: item.item_id,
+      shop_id: item.shop_id
+    }));
+    
+    console.log(`Final item count: ${products.length} (expected: ${itemsCount})`);
+
+    // Close the page
+    await page.close();
+
+    // Extract session metadata from joinv2 response
+    const sessionData = joinv2Response?.data?.session || {};
+    
+    // Return the products with metadata
+    res.json({
+      success: true,
+      sessionId: parseInt(sessionId),
+      metadata: {
+        expectedItemsCount: itemsCount,
+        productsFound: products.length,
+        collectionComplete: products.length >= itemsCount,
+        session: {
+          session_id: sessionData.session_id,
+          username: sessionData.username,
+          nickname: sessionData.nickname,
+          title: sessionData.title,
+          shop_id: sessionData.shop_id,
+          status: sessionData.status,
+          start_time: sessionData.start_time,
+          end_time: sessionData.end_time,
+          member_cnt: sessionData.member_cnt,
+          like_cnt: sessionData.like_cnt,
+          viewer_count: sessionData.viewer_count
+        }
+      },
+      products: products
+    });
+
+  } catch (error) {
+    console.error('Error:', error.message);
+    
+    if (page) {
+      try {
+        await page.close();
+        console.log('Closed page after error');
+      } catch (closeError) {
         console.log('Page already closed or error closing:', closeError.message);
       }
     }
