@@ -24,32 +24,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://localhost:9222';
 
-// Shared browser connection (reused across requests for performance)
-let sharedBrowser = null;
-let browserConnectionPromise = null;
-
-// Get or create shared browser connection
-async function getBrowser() {
-  if (sharedBrowser) {
-    return sharedBrowser;
-  }
-  
-  if (browserConnectionPromise) {
-    return browserConnectionPromise;
-  }
-  
-  browserConnectionPromise = chromium.connectOverCDP(CDP_ENDPOINT).then(browser => {
-    sharedBrowser = browser;
-    browserConnectionPromise = null;
-    return browser;
-  }).catch(error => {
-    browserConnectionPromise = null;
-    throw error;
-  });
-  
-  return browserConnectionPromise;
-}
-
 // Middleware
 app.use(express.json());
 
@@ -63,32 +37,41 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
 
   let browser = null;
   let page = null;
+  let context = null;
   const requestId = `${Date.now()}-${Math.random()}`; // Unique request ID
   
   try {
-    // Get shared browser connection (reused for performance)
-    console.log(`[${requestId}] Getting browser connection...`);
+    // Connect to existing browser via CDP (Chrome DevTools Protocol)
+    console.log(`[${requestId}] Connecting to browser via CDP: ${CDP_ENDPOINT}`);
     try {
-      browser = await getBrowser();
+      browser = await chromium.connectOverCDP(CDP_ENDPOINT);
     } catch (error) {
       throw new Error(`Failed to connect to browser via CDP at ${CDP_ENDPOINT}. Make sure your browser is launched with --remote-debugging-port=9222. Error: ${error.message}`);
     }
     
-    // Create a NEW context for each request to ensure true concurrency
-    // This prevents blocking between concurrent requests
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      locale: 'id-ID',
-      timezoneId: 'Asia/Jakarta',
-      extraHTTPHeaders: {
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      }
-    });
-    console.log(`[${requestId}] Created new browser context for concurrent execution`);
+    // Get the default context (or create a new one if needed)
+    const contexts = browser.contexts();
+    
+    if (contexts.length > 0) {
+      // Use existing context
+      context = contexts[0];
+      console.log(`[${requestId}] Using existing browser context`);
+    } else {
+      // Create new context if none exists
+      context = await browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        locale: 'id-ID',
+        timezoneId: 'Asia/Jakarta',
+        extraHTTPHeaders: {
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1'
+        }
+      });
+      console.log(`[${requestId}] Created new browser context`);
+    }
     
     // Create a new page for this request (will be closed after use to save RAM)
     page = await context.newPage();
@@ -179,7 +162,7 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
       throw new Error('items_cnt not found in API response');
     }
 
-    // Close the page and context to free up RAM (stops video playback)
+    // Close the page to free up RAM (stops video playback)
     // Verify this is still our page before closing
     if (page && !page.isClosed()) {
       console.log(`[${requestId}] Closing page to free up resources...`);
@@ -187,16 +170,6 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
         await page.close();
       } catch (closeError) {
         console.error(`[${requestId}] Error closing page:`, closeError.message);
-      }
-    }
-    
-    // Close the context as well to free up resources
-    if (context) {
-      try {
-        await context.close();
-        console.log(`[${requestId}] Closed browser context`);
-      } catch (closeError) {
-        console.error(`[${requestId}] Error closing context:`, closeError.message);
       }
     }
 
@@ -210,7 +183,7 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
   } catch (error) {
     console.error(`[${requestId}] Error:`, error.message);
     
-    // Make sure to close the page and context even on error to free up RAM
+    // Make sure to close the page even on error to free up RAM
     // Only close if it's our page and not already closed
     if (page && !page.isClosed()) {
       try {
@@ -219,15 +192,6 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
       } catch (closeError) {
         // Page might already be closed, ignore the error
         console.log(`[${requestId}] Page already closed or error closing:`, closeError.message);
-      }
-    }
-    
-    // Close context on error too
-    if (context) {
-      try {
-        await context.close();
-      } catch (closeError) {
-        // Context might already be closed
       }
     }
 
@@ -248,33 +212,41 @@ app.get('/api/products/:sessionId', async (req, res) => {
 
   let browser = null;
   let page = null;
-
+  let context = null;
   const requestId = `${Date.now()}-${Math.random()}`; // Unique request ID
   
   try {
-    // Get shared browser connection (reused for performance)
-    console.log(`[${requestId}] Getting browser connection...`);
+    // Connect to existing browser via CDP
+    console.log(`[${requestId}] Connecting to browser via CDP: ${CDP_ENDPOINT}`);
     try {
-      browser = await getBrowser();
+      browser = await chromium.connectOverCDP(CDP_ENDPOINT);
     } catch (error) {
       throw new Error(`Failed to connect to browser via CDP at ${CDP_ENDPOINT}. Make sure your browser is launched with --remote-debugging-port=9222. Error: ${error.message}`);
     }
     
-    // Create a NEW context for each request to ensure true concurrency
-    // This prevents blocking between concurrent requests
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      locale: 'id-ID',
-      timezoneId: 'Asia/Jakarta',
-      extraHTTPHeaders: {
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      }
-    });
-    console.log(`[${requestId}] Created new browser context for concurrent execution`);
+    // Get the default context (or create a new one if needed)
+    const contexts = browser.contexts();
+    
+    if (contexts.length > 0) {
+      // Use existing context
+      context = contexts[0];
+      console.log(`[${requestId}] Using existing browser context`);
+    } else {
+      // Create new context if none exists
+      context = await browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        locale: 'id-ID',
+        timezoneId: 'Asia/Jakarta',
+        extraHTTPHeaders: {
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1'
+        }
+      });
+      console.log(`[${requestId}] Created new browser context`);
+    }
 
     // Create a new page for this request
     page = await context.newPage();
@@ -508,7 +480,7 @@ app.get('/api/products/:sessionId', async (req, res) => {
     
     console.log(`Final item count: ${products.length} (expected: ${itemsCount})`);
 
-    // Close the page and context to free up RAM
+    // Close the page to free up RAM
     // Verify this is still our page before closing
     if (page && !page.isClosed()) {
       console.log(`[${requestId}] Closing page to free up resources...`);
@@ -516,16 +488,6 @@ app.get('/api/products/:sessionId', async (req, res) => {
         await page.close();
       } catch (closeError) {
         console.error(`[${requestId}] Error closing page:`, closeError.message);
-      }
-    }
-    
-    // Close the context as well to free up resources
-    if (context) {
-      try {
-        await context.close();
-        console.log(`[${requestId}] Closed browser context`);
-      } catch (closeError) {
-        console.error(`[${requestId}] Error closing context:`, closeError.message);
       }
     }
 
@@ -567,15 +529,6 @@ app.get('/api/products/:sessionId', async (req, res) => {
         console.log(`[${requestId}] Closed page after error`);
       } catch (closeError) {
         console.log(`[${requestId}] Page already closed or error closing:`, closeError.message);
-      }
-    }
-    
-    // Close context on error too
-    if (context) {
-      try {
-        await context.close();
-      } catch (closeError) {
-        // Context might already be closed
       }
     }
 
