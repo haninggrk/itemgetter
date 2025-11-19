@@ -75,7 +75,9 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
 
     // Create a new page for this request (will be closed after use to save RAM)
     page = await context.newPage();
-    console.log('Created new page for request');
+    const pageId = page.url(); // Use URL as unique identifier (will be empty initially, but unique per page)
+    const requestId = `${Date.now()}-${Math.random()}`; // Unique request ID
+    console.log(`[${requestId}] Created new page for request`);
 
     // Set up request interception to capture the API response
     let apiResponse = null;
@@ -162,8 +164,15 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     }
 
     // Close the page to free up RAM (stops video playback)
-    console.log('Closing page to free up resources...');
-    await page.close();
+    // Verify this is still our page before closing
+    if (page && !page.isClosed()) {
+      console.log(`[${requestId}] Closing page to free up resources...`);
+      try {
+        await page.close();
+      } catch (closeError) {
+        console.error(`[${requestId}] Error closing page:`, closeError.message);
+      }
+    }
 
     // Return the item count
     res.json({
@@ -173,16 +182,17 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error(`[${requestId}] Error:`, error.message);
     
     // Make sure to close the page even on error to free up RAM
-    if (page) {
+    // Only close if it's our page and not already closed
+    if (page && !page.isClosed()) {
       try {
         await page.close();
-        console.log('Closed page after error');
+        console.log(`[${requestId}] Closed page after error`);
       } catch (closeError) {
         // Page might already be closed, ignore the error
-        console.log('Page already closed or error closing:', closeError.message);
+        console.log(`[${requestId}] Page already closed or error closing:`, closeError.message);
       }
     }
 
@@ -238,7 +248,9 @@ app.get('/api/products/:sessionId', async (req, res) => {
 
     // Create a new page for this request
     page = await context.newPage();
-    console.log('Created new page for request');
+    const pageId = page.url(); // Use URL as unique identifier
+    const requestId = `${Date.now()}-${Math.random()}`; // Unique request ID
+    console.log(`[${requestId}] Created new page for request`);
 
     // Helper function to remove Shopee dialog popup by deleting the node
     const closeShopeeDialog = async () => {
@@ -467,8 +479,15 @@ app.get('/api/products/:sessionId', async (req, res) => {
     
     console.log(`Final item count: ${products.length} (expected: ${itemsCount})`);
 
-    // Close the page
-    await page.close();
+    // Close the page - verify it's still our page and not already closed
+    if (page && !page.isClosed()) {
+      console.log(`[${requestId}] Closing page to free up resources...`);
+      try {
+        await page.close();
+      } catch (closeError) {
+        console.error(`[${requestId}] Error closing page:`, closeError.message);
+      }
+    }
 
     // Extract session metadata from joinv2 response
     const sessionData = joinv2Response?.data?.session || {};
@@ -499,14 +518,15 @@ app.get('/api/products/:sessionId', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error(`[${requestId}] Error:`, error.message);
     
-    if (page) {
+    // Only close if it's our page and not already closed
+    if (page && !page.isClosed()) {
       try {
         await page.close();
-        console.log('Closed page after error');
+        console.log(`[${requestId}] Closed page after error`);
       } catch (closeError) {
-        console.log('Page already closed or error closing:', closeError.message);
+        console.log(`[${requestId}] Page already closed or error closing:`, closeError.message);
       }
     }
 
