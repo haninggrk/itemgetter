@@ -227,8 +227,8 @@ app.get('/api/products/:sessionId', async (req, res) => {
         const dialogRemoved = await page.evaluate(() => {
           const dialog = document.querySelector('.Dialog__Container-sc-1l9g2uc-0.iOfyCd') ||
                         document.querySelector('[class*="Dialog__Container"]');
-          if (dialog && dialog.parentNode) {
-            dialog.parentNode.removeChild(dialog);
+          if (dialog) {
+            dialog.remove(); // Direct removal
             return true;
           }
           return false;
@@ -236,7 +236,6 @@ app.get('/api/products/:sessionId', async (req, res) => {
         
         if (dialogRemoved) {
           console.log('Removed Shopee dialog popup');
-          await page.waitForTimeout(100);
           return true;
         }
       } catch (e) {
@@ -364,69 +363,10 @@ app.get('/api/products/:sessionId', async (req, res) => {
 
     console.log(`Expected items count: ${itemsCount}`);
     
-    // Close any existing popup before clicking product button
-    await closeShopeeDialog();
+    // Wait a bit for first more_items API call to happen automatically
+    console.log('Waiting for initial product data...');
+    await page.waitForTimeout(2000);
     
-    // Click the OpenProductButton to open product list (with retry logic)
-    let containerFound = false;
-    let retryCount = 0;
-    const maxRetries = 5;
-    
-    while (!containerFound && retryCount < maxRetries) {
-      // Close any popup before each attempt
-      await closeShopeeDialog();
-      await page.waitForTimeout(500);
-      
-      console.log(`Attempting to click OpenProductButton (attempt ${retryCount + 1}/${maxRetries})...`);
-      
-      try {
-        // Try to find and click the button
-        const buttonFound = await page.evaluate(() => {
-          const button = document.querySelector('.OpenProductButton__StyledContainner-sc-1fbfno7-0.csDMAA') ||
-                        document.querySelector('[class*="OpenProductButton"]');
-          if (button) {
-            button.click();
-            return true;
-          }
-          return false;
-        });
-        
-        if (buttonFound) {
-          console.log('Product button clicked');
-          await page.waitForTimeout(1000);
-          
-          // Check if container appeared
-          containerFound = await page.evaluate(() => {
-            return !!(
-              document.querySelector('.ProductList__StyledList-zzolnk-4.eUSJvS') ||
-              document.querySelector('[class*="ProductList"]')
-            );
-          });
-          
-          if (containerFound) {
-            console.log('Product list container found!');
-            break;
-          } else {
-            console.log('Container not found after click, retrying...');
-            retryCount++;
-            await page.waitForTimeout(1000);
-          }
-        } else {
-          console.log('OpenProductButton not found, waiting and retrying...');
-          retryCount++;
-          await page.waitForTimeout(1000);
-        }
-      } catch (error) {
-        console.log(`Error clicking button: ${error.message}, retrying...`);
-        retryCount++;
-        await page.waitForTimeout(1000);
-      }
-    }
-    
-    if (!containerFound) {
-      console.log('Could not open product container after multiple attempts, but continuing...');
-    }
-
     // Scroll and collect items until we have all items
     console.log('Scrolling to collect all items...');
     const scrollContainer = '.ProductList__StyledList-zzolnk-4.eUSJvS';
