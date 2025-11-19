@@ -1,6 +1,25 @@
 const express = require('express');
 const { chromium } = require('playwright');
 
+// Prevent stdin from blocking the process (Windows issue)
+process.stdin.resume();
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', () => {
+  // Ignore input but keep stdin open to prevent blocking
+});
+process.stdin.on('end', () => {
+  // Handle stdin end gracefully
+});
+
+// Ensure output is flushed immediately
+const originalLog = console.log;
+console.log = (...args) => {
+  originalLog(...args);
+  if (process.stdout.isTTY) {
+    process.stdout.write(''); // Force flush
+  }
+};
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://localhost:9222';
