@@ -471,11 +471,12 @@ app.get('/api/products/:sessionId', async (req, res) => {
       }
     }
 
-    // Convert Map to Array and extract only item_id and shop_id
+    // Convert Map to Array and extract item_id, shop_id, and stock
     const allProducts = Array.from(allItems.values());
     const products = allProducts.map(item => ({
       item_id: item.item_id,
-      shop_id: item.shop_id
+      shop_id: item.shop_id,
+      stock: item.display_total_stock !== undefined ? item.display_total_stock : (item.sp_total_stock !== undefined ? item.sp_total_stock : null)
     }));
     
     console.log(`Final item count: ${products.length} (expected: ${itemsCount})`);
