@@ -78,7 +78,7 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     
     await page.goto(liveUrl, {
       waitUntil: 'domcontentloaded',
-      timeout: 30000
+      timeout: 80000
     });
     
     // Check if live streaming has ended
@@ -96,7 +96,7 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     console.log('Waiting for video element to appear...');
     try {
       await page.waitForSelector('video', { 
-        timeout: 30000,
+        timeout: 80000,
         state: 'attached'
       });
       console.log('Video element found');
@@ -124,7 +124,7 @@ app.get('/api/items-count/:sessionId', async (req, res) => {
     // Wait for the API request to complete
     console.log('Waiting for API response...');
     let waitTime = 0;
-    const maxWaitTime = 30000;
+    const maxWaitTime = 80000;
     
     while (!apiResponse && waitTime < maxWaitTime) {
       await page.waitForTimeout(100);
@@ -268,7 +268,7 @@ app.get('/api/products/:sessionId', async (req, res) => {
     
     await page.goto(liveUrl, {
       waitUntil: 'domcontentloaded',
-      timeout: 30000
+      timeout: 80000
     });
     
     // Check if live streaming has ended
@@ -286,7 +286,7 @@ app.get('/api/products/:sessionId', async (req, res) => {
     console.log('Waiting for video element to appear...');
     try {
       await page.waitForSelector('video', { 
-        timeout: 30000,
+        timeout: 80000,
         state: 'attached'
       });
       console.log('Video element found');
@@ -313,11 +313,11 @@ app.get('/api/products/:sessionId', async (req, res) => {
     // Wait for joinv2 response to get items_cnt
     console.log('Waiting for joinv2 response to get items count...');
     let waitTime = 0;
-    const maxWaitTime = 30000;
+    const maxWaitTime = 80000;
     
     while (!joinv2Response && waitTime < maxWaitTime) {
-      await page.waitForTimeout(500);
-      waitTime += 500;
+      await page.waitForTimeout(100);
+      waitTime += 100;
     }
 
     if (!joinv2Response) {
@@ -375,10 +375,50 @@ app.get('/api/products/:sessionId', async (req, res) => {
     const scrollContainer = '.ProductList__StyledList-zzolnk-4.eUSJvS';
     let previousItemCount = 0;
     let noNewItemsCount = 0;
-    const maxNoNewItems = 3; // Stop if no new items after 3 scrolls
+    const maxNoNewItems = 3;
+    const scrollStartTime = Date.now();
+    const maxScrollTime = 80000; // 80 seconds max for scrolling
     
     while (allItems.size < itemsCount) {
-      // Scroll down in the container
+      // Check overall timeout
+      if (Date.now() - scrollStartTime > maxScrollTime) {
+        console.log('Reached maximum scroll time (80s), stopping...');
+        break;
+      }
+      
+      // Close any popups that might appear (programmatically)
+      try {
+        const popupClosed = await page.evaluate(() => {
+          // Try to find and close common popup elements
+          const closeSelectors = [
+            '[class*="close"]',
+            '[class*="Close"]',
+            '[aria-label*="close" i]',
+            '[aria-label*="Close"]',
+            'button[class*="dismiss"]',
+            '[class*="modal"] [class*="close"]',
+            '[class*="popup"] [class*="close"]'
+          ];
+          
+          for (const selector of closeSelectors) {
+            const element = document.querySelector(selector);
+            if (element && element.offsetParent !== null) { // Element is visible
+              element.click();
+              return true;
+            }
+          }
+          return false;
+        });
+        
+        if (popupClosed) {
+          console.log('Closed popup programmatically');
+          await page.waitForTimeout(200);
+        }
+      } catch (e) {
+        // No popup or error closing, continue
+      }
+      
+      // Scroll down in the container programmatically
       await page.evaluate((selector) => {
         const container = document.querySelector(selector) || 
                          document.querySelector('[class*="ProductList"]');
